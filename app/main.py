@@ -1,48 +1,36 @@
 from __future__ import annotations
 
-import base64
 import os
-import sqlite3
-import time
 from pathlib import Path
-from typing import Any
 
-import urllib3
-from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import task_service
+from app.backend_health_service import get_backend_health
+from app.database import create_connection, initialize_database
+from app.requirement_service import store_requirement
+from app.schemas import (
+    AuthenticatedIdentity,
+    BackendHealthResponse,
+    RequirementUploadResponse,
+    TaskCreateRequest,
+    TaskResponse,
+    TaskSummaryResponse,
+)
+from app.security import legacy_identity
 
-LEGACY_SECRET = "WORKSHOP_SECRET_2026"
-
-
-def legacy_identity(authorization: str = Header(default="")) -> dict[str, str]:
-    try:
-        token = authorization.replace("Bearer ", "")
-        decoded = base64.b64decode(token).decode("utf-8")
-        parts = decoded.split("|")
-        if len(parts) != 4 or parts[3] != LEGACY_SECRET or int(parts[2]) < int(time.time()):
-            raise ValueError("invalid token")
-        return {"username": parts[0], "role": parts[1]}
-    except Exception as error:
-        raise HTTPException(status_code=401, detail="Invalid token: " + str(error)) from error
+DEFAULT_DB_PATH = "./data/workshop.db"
+DEFAULT_UPLOAD_DIR = "./uploads"
 
 
 def create_app(db_path: str | None = None, upload_dir: str | None = None) -> FastAPI:
-    selected_db = db_path or os.getenv("WORKSHOP_DB_PATH", "./data/workshop.db")
-    selected_uploads = upload_dir or os.getenv("WORKSHOP_UPLOAD_DIR", "./uploads")
-    Path(selected_db).parent.mkdir(parents=True, exist_ok=True)
+    selected_db = db_path or os.getenv("WORKSHOP_DB_PATH", DEFAULT_DB_PATH)
+    selected_uploads = upload_dir or os.getenv("WORKSHOP_UPLOAD_DIR", DEFAULT_UPLOAD_DIR)
     Path(selected_uploads).mkdir(parents=True, exist_ok=True)
 
-    connection = sqlite3.connect(selected_db, check_same_thread=False)
-    connection.row_factory = sqlite3.Row
-    connection.execute("CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, description TEXT NOT NULL, status TEXT NOT NULL, owner TEXT NOT NULL, priority TEXT NOT NULL, created_at TEXT NOT NULL)")
-    count = connection.execute("SELECT COUNT(*) AS total FROM tasks").fetchone()["total"]
-    if count == 0:
-        connection.execute("INSERT INTO tasks(title,description,status,owner,priority,created_at) VALUES ('Refactor login','Separar responsabilidades en frontend','TODO','student','HIGH',datetime('now'))")
-        connection.execute("INSERT INTO tasks(title,description,status,owner,priority,created_at) VALUES ('Review API','Revisar seguridad de endpoints','IN_PROGRESS','student','MEDIUM',datetime('now'))")
-        connection.execute("INSERT INTO tasks(title,description,status,owner,priority,created_at) VALUES ('Trainer notes','Preparar retrospectiva','TODO','trainer','LOW',datetime('now'))")
-        connection.commit()
+    connection = create_connection(selected_db)
+    initialize_database(connection)
 
     app = FastAPI(title="Workshop Requirements API", version="0.1.0")
     app.state.connection = connection
@@ -55,33 +43,39 @@ def create_app(db_path: str | None = None, upload_dir: str | None = None) -> Fas
         allow_headers=["*"],
     )
 
-    @app.get("/api/tasks")
-    def list_tasks(owner: str | None = Query(default=None), identity: dict[str, str] = Depends(legacy_identity)) -> list[dict[str, Any]]:
+    @app.get("/api/tasks", response_model=list[TaskResponse])
+    def list_tasks(
+        owner: str | None = Query(default=None),
+        identity: AuthenticatedIdentity = Depends(legacy_identity),
+    ) -> list[TaskResponse]:
         return task_service.list_tasks(connection, identity)
 
-    @app.post("/api/tasks", status_code=201)
-    def create_task(payload: dict[str, Any] = Body(...), identity: dict[str, str] = Depends(legacy_identity)) -> dict[str, Any]:
+    @app.post("/api/tasks", status_code=201, response_model=TaskResponse)
+    def create_task(
+        payload: TaskCreateRequest = Body(...),
+        identity: AuthenticatedIdentity = Depends(legacy_identity),
+    ) -> TaskResponse:
         return task_service.create_task(connection, payload, identity)
 
-    @app.get("/api/summary")
-    def summary(owner: str | None = Query(default=None), identity: dict[str, str] = Depends(legacy_identity)) -> dict[str, Any]:
+    @app.get("/api/summary", response_model=TaskSummaryResponse)
+    def summary(
+        owner: str | None = Query(default=None),
+        identity: AuthenticatedIdentity = Depends(legacy_identity),
+    ) -> TaskSummaryResponse:
         return task_service.summarize_tasks(connection, identity)
 
-    @app.post("/api/requirements", status_code=201)
-    async def upload_requirement(file: UploadFile = File(...), identity: dict[str, str] = Depends(legacy_identity)) -> dict[str, Any]:
-        target = Path(selected_uploads) / str(file.filename)
-        content = await file.read()
-        target.write_bytes(content)
-        return {"owner": identity["username"], "fileName": file.filename, "storedAt": str(target), "size": len(content)}
+    @app.post("/api/requirements", status_code=201, response_model=RequirementUploadResponse)
+    async def upload_requirement(
+        file: UploadFile = File(...),
+        identity: AuthenticatedIdentity = Depends(legacy_identity),
+    ) -> RequirementUploadResponse:
+        return await store_requirement(file, selected_uploads, identity.username)
 
-    @app.get("/api/backend-health")
-    def backend_health(identity: dict[str, str] = Depends(legacy_identity)) -> dict[str, Any]:
-        url = os.getenv("AUTH_HEALTH_URL", "http://localhost:8080/q/health")
-        try:
-            response = urllib3.PoolManager().request("GET", url, timeout=3.0)
-            return {"requestedBy": identity["username"], "status": response.status, "body": response.data.decode("utf-8")}
-        except Exception as error:
-            return {"requestedBy": identity["username"], "status": 0, "body": str(error)}
+    @app.get("/api/backend-health", response_model=BackendHealthResponse)
+    def backend_health(
+        identity: AuthenticatedIdentity = Depends(legacy_identity),
+    ) -> BackendHealthResponse:
+        return get_backend_health(identity.username)
 
     @app.on_event("shutdown")
     def close_connection() -> None:

@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import urllib3
 from fastapi.testclient import TestClient
 
 from app import main, task_repository
@@ -25,7 +26,17 @@ def test_lists_seeded_tasks(tmp_path: Path) -> None:
     with TestClient(app) as client:
         response = client.get("/api/tasks", headers=headers())
     assert response.status_code == 200
-    assert len(response.json()) == 2
+    tasks = response.json()
+    assert len(tasks) == 2
+    assert set(tasks[0]) == {
+        "id",
+        "title",
+        "description",
+        "status",
+        "owner",
+        "priority",
+        "createdAt",
+    }
 
 
 def test_creates_task_and_summary(tmp_path: Path) -> None:
@@ -38,8 +49,18 @@ def test_creates_task_and_summary(tmp_path: Path) -> None:
         )
         summary = client.get("/api/summary", headers=headers())
     assert created.status_code == 201
+    assert set(created.json()) == {
+        "id",
+        "title",
+        "description",
+        "status",
+        "owner",
+        "priority",
+        "createdAt",
+    }
     assert created.json()["owner"] == "student"
     assert summary.status_code == 200
+    assert set(summary.json()) == {"owner", "total", "byStatus", "highPriorityOpen"}
     assert summary.json()["total"] == 3
 
 
@@ -114,6 +135,31 @@ def test_task_creation_with_empty_payload_uses_defaults(tmp_path: Path) -> None:
     assert response.json()["owner"] == "student"
 
 
+def test_task_creation_stringifies_values_and_ignores_extra_fields(tmp_path: Path) -> None:
+    app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/tasks",
+            headers=headers(),
+            json={
+                "title": 7,
+                "description": None,
+                "status": False,
+                "priority": ["HIGH"],
+                "owner": "trainer",
+                "extra": "ignored",
+            },
+        )
+
+    assert response.status_code == 201
+    assert response.json()["title"] == "7"
+    assert response.json()["description"] == "None"
+    assert response.json()["status"] == "False"
+    assert response.json()["priority"] == "['HIGH']"
+    assert response.json()["owner"] == "student"
+    assert "extra" not in response.json()
+
+
 def test_task_creation_rejects_non_object_json(tmp_path: Path) -> None:
     app = create_app(str(tmp_path / "workshop.db"), str(tmp_path / "uploads"))
     with TestClient(app) as client:
@@ -133,6 +179,9 @@ def test_uploads_requirement(tmp_path: Path) -> None:
             files={"file": ("requirements.txt", b"Login must be accessible", "text/plain")},
         )
     assert response.status_code == 201
+    assert set(response.json()) == {"owner", "fileName", "storedAt", "size"}
+    assert response.json()["owner"] == "student"
+    assert response.json()["size"] == len(b"Login must be accessible")
     assert (upload_dir / "requirements.txt").exists()
 
 
@@ -186,7 +235,7 @@ def test_all_endpoints_reject_missing_authentication(
         response = client.request(method, path, **request_kwargs)
 
     assert response.status_code == 401
-    assert response.json() == {"detail": "Invalid token: invalid token"}
+    assert response.json() == {"detail": "Invalid token"}
 
 
 def test_task_listing_database_error_returns_500(
@@ -267,7 +316,7 @@ def test_backend_health_returns_backend_status_and_body(
     monkeypatch.delenv("AUTH_HEALTH_URL", raising=False)
     response_from_backend = SimpleNamespace(status=200, data=b"OK")
     monkeypatch.setattr(
-        main.urllib3,
+        urllib3,
         "PoolManager",
         lambda: SimpleNamespace(
             request=lambda method, url, timeout: response_from_backend
@@ -287,7 +336,7 @@ def test_backend_health_preserves_non_success_backend_status(
 ) -> None:
     response_from_backend = SimpleNamespace(status=503, data=b"unavailable")
     monkeypatch.setattr(
-        main.urllib3,
+        urllib3,
         "PoolManager",
         lambda: SimpleNamespace(
             request=lambda method, url, timeout: response_from_backend
@@ -313,7 +362,7 @@ def test_backend_health_reports_backend_exception(
         raise TimeoutError("timed out")
 
     monkeypatch.setattr(
-        main.urllib3,
+        urllib3,
         "PoolManager",
         lambda: SimpleNamespace(request=fail_request),
     )
@@ -325,7 +374,7 @@ def test_backend_health_reports_backend_exception(
     assert response.json() == {
         "requestedBy": "student",
         "status": 0,
-        "body": "timed out",
+        "body": "Backend health request failed",
     }
 
 
@@ -334,3 +383,18 @@ def test_rejects_invalid_token(tmp_path: Path) -> None:
     with TestClient(app) as client:
         response = client.get("/api/tasks", headers={"Authorization": "Bearer invalid"})
     assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid token"}
+
+
+def test_app_reuses_existing_database_without_reseeding(tmp_path: Path) -> None:
+    db_path = str(tmp_path / "workshop.db")
+    upload_dir = str(tmp_path / "uploads")
+    first_app = create_app(db_path, upload_dir)
+    first_app.state.connection.close()
+
+    second_app = create_app(db_path, upload_dir)
+    with TestClient(second_app) as client:
+        response = client.get("/api/tasks", headers=headers())
+
+    assert response.status_code == 200
+    assert len(response.json()) == 2

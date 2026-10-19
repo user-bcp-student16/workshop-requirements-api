@@ -1,6 +1,6 @@
 # Pruebas de la API
 
-Los tests ejecutables están en [`tests/test_api.py`](../tests/test_api.py). La tabla registra las pruebas existentes y el resultado esperado/observado para cada endpoint. No se modificó código de aplicación en esta tarea.
+Los tests ejecutables están en [`tests/test_api.py`](../tests/test_api.py). La tabla registra las pruebas existentes y el resultado esperado/observado para cada endpoint. Se añadieron caracterizaciones para H-05/H-06 antes del refactor; los tests finales comprueban contratos y errores genéricos.
 
 ## Matriz
 
@@ -9,31 +9,38 @@ Los tests ejecutables están en [`tests/test_api.py`](../tests/test_api.py). La 
 | `GET /api/tasks` | `test_lists_seeded_tasks` | Camino feliz | `200`; lista las dos tareas iniciales de `student`. |
 | `GET /api/tasks` | `test_task_listing_uses_authenticated_owner` | Seguridad / borde | `200`; con query `owner=trainer` y token de `student`, solo devuelve tareas de `student`. |
 | `GET /api/tasks` | `test_task_listing_accepts_empty_owner_query` | Borde | `200`; `owner=` no cambia el propietario derivado de la identidad. |
-| `GET /api/tasks` | `test_all_endpoints_reject_missing_authentication` (caso GET tasks) | Error | `401` y `{"detail":"Invalid token: invalid token"}`. |
+| `GET /api/tasks` | `test_all_endpoints_reject_missing_authentication` (caso GET tasks) | Error | `401` y `{"detail":"Invalid token"}`. |
 | `GET /api/tasks` | `test_task_listing_database_error_returns_500` | Error | `500` ante un fallo SQLite simulado; el cuerpo no está fijado por la ruta. |
 | `GET /api/tasks` | Error `422` anunciado por OpenAPI | Pendiente | No se conoce una entrada que lo provoque: `owner` acepta string/null y no tiene restricciones. No se inventó un caso. |
 | `POST /api/tasks` | `test_creates_task_and_summary` | Camino feliz | `201` al crear; el resumen posterior devuelve `200`. |
 | `POST /api/tasks` | `test_task_creation_with_empty_payload_uses_defaults` | Borde | `{}` devuelve `201`; title/description vacíos, status `TODO`, priority `MEDIUM` y owner autenticado. |
+| `POST /api/tasks` | `test_task_creation_stringifies_values_and_ignores_extra_fields` | Borde | `201`; convierte valores JSON a string como antes, ignora campos extra y no acepta el `owner` del cliente. |
 | `POST /api/tasks` | `test_task_creation_uses_authenticated_owner` | Seguridad / borde | `201`; ignora `owner=trainer` del cuerpo y asigna `student`. |
 | `POST /api/tasks` | `test_task_creation_rejects_non_object_json` | Error | `422`; el error de validación indica `dict_type`. |
-| `POST /api/tasks` | `test_all_endpoints_reject_missing_authentication` (caso POST tasks) | Error | `401` con cuerpo JSON de token inválido. |
+| `POST /api/tasks` | `test_all_endpoints_reject_missing_authentication` (caso POST tasks) | Error | `401` con `{"detail":"Invalid token"}`. |
 | `POST /api/tasks` | `test_task_creation_database_error_returns_500` | Error | `500` ante un fallo de inserción SQLite simulado. |
 | `GET /api/summary` | `test_creates_task_and_summary` | Camino feliz | `200`; resume las tareas de `student` luego de crear una tarea. |
 | `GET /api/summary` | `test_summary_for_owner_without_tasks` | Borde | `200`; total `0`, `byStatus` vacío y `highPriorityOpen` `0`. |
 | `GET /api/summary` | `test_summary_uses_authenticated_owner` | Seguridad / borde | `200`; ignora `owner=trainer` y resume `student`. |
-| `GET /api/summary` | `test_all_endpoints_reject_missing_authentication` (caso GET summary) | Error | `401` con cuerpo JSON de token inválido. |
+| `GET /api/summary` | `test_all_endpoints_reject_missing_authentication` (caso GET summary) | Error | `401` con `{"detail":"Invalid token"}`. |
 | `GET /api/summary` | `test_summary_database_error_returns_500` | Error | `500` ante un fallo de consulta SQLite simulado. |
 | `GET /api/summary` | Error `422` anunciado por OpenAPI | Pendiente | No se conoce un valor de `owner` que dispare validación: es string/null sin restricciones. |
 | `POST /api/requirements` | `test_uploads_requirement` | Camino feliz | `201`; guarda el archivo y devuelve owner, nombre, ruta y tamaño. |
 | `POST /api/requirements` | `test_uploads_empty_file_without_extension` | Borde | `201`; acepta archivo vacío sin extensión y reporta tamaño `0`. Esto caracteriza el comportamiento actual, no una garantía de seguridad. |
 | `POST /api/requirements` | `test_upload_rejects_missing_file` | Error | `422`; `detail[0].loc` es `["body","file"]`. |
-| `POST /api/requirements` | `test_all_endpoints_reject_missing_authentication` (caso POST requirements) | Error | `401` con cuerpo JSON de token inválido. |
+| `POST /api/requirements` | `test_all_endpoints_reject_missing_authentication` (caso POST requirements) | Error | `401` con `{"detail":"Invalid token"}`. |
 | `POST /api/requirements` | `test_upload_write_error_returns_500` | Error | `500` al simular un error de escritura. |
 | `GET /api/backend-health` | `test_backend_health_returns_backend_status_and_body` | Camino feliz | `200`; conserva status `200` y body `OK` del backend simulado. |
 | `GET /api/backend-health` | `test_backend_health_preserves_non_success_backend_status` | Borde | `200` de esta API; el status remoto `503` y su body se incluyen en la respuesta. |
-| `GET /api/backend-health` | `test_backend_health_reports_backend_exception` | Error remoto manejado | `200` de esta API, `status` remoto `0` y mensaje de excepción en `body`. |
-| `GET /api/backend-health` | `test_all_endpoints_reject_missing_authentication` (caso GET backend-health) | Error | `401` con cuerpo JSON de token inválido. |
+| `GET /api/backend-health` | `test_backend_health_reports_backend_exception` | Error remoto manejado | `200` de esta API, `status` remoto `0` y `body` genérico `Backend health request failed`. |
+| `GET /api/backend-health` | `test_all_endpoints_reject_missing_authentication` (caso GET backend-health) | Error | `401` con `{"detail":"Invalid token"}`. |
 | `GET /api/backend-health` | Error `422` anunciado por OpenAPI | Pendiente | La ruta no declara query ni cuerpo; no se encontró una solicitud que provoque `422`. |
+
+## Pruebas transversales
+
+| Test | Tipo | Resultado esperado |
+|---|---|---|
+| `test_app_reuses_existing_database_without_reseeding` | Caracterización de inicialización | Al abrir una base existente, conserva sus dos tareas de `student` sin sembrarlas de nuevo. |
 
 ## Código de los tests
 
@@ -66,16 +73,22 @@ def test_uploads_empty_file_without_extension(tmp_path: Path) -> None:
     assert (upload_dir / "requirement").read_bytes() == b""
 ```
 
+## Implementación H-05/H-06
+
+- `app/database.py` concentra creación de conexión, esquema y datos iniciales.
+- `app/task_service.py`, `app/requirement_service.py` y `app/backend_health_service.py` contienen reglas de aplicación; `app/task_repository.py` conserva SQL parametrizado.
+- `app/schemas.py` tipa identidad, request y respuestas Pydantic; los aliases conservan las claves JSON públicas.
+- `app/security.py` mantiene la autenticación legacy y responde con un error genérico. No verifica firma JWT; eso permanece pendiente en H-01.
+- Los errores de red previstos del backend ya no exponen texto de excepción. H-04 sigue pendiente: mover la carga a un servicio no la vuelve segura.
+
 ## Ejecución registrada
 
 Directorio de trabajo: raíz de `workshop-requirements-api/` (repositorio del componente).
 
 | Comando | Código de salida | Resultado observado |
 |---|---:|---|
-| `.\.venv\Scripts\python.exe -m pytest tests/test_api.py::test_creates_task_and_summary` | `0` | `1 passed`, 5 advertencias de deprecación, 0.47 s. |
-| `.\.venv\Scripts\python.exe -m pytest tests/test_api.py` | `0` | `25 passed`, 53 advertencias de deprecación, 1.00 s. |
-| `.\.venv\Scripts\python.exe -m coverage run --branch -m pytest tests/test_api.py` | `0` | `25 passed`, 53 advertencias, 1.33 s. |
-| `.\.venv\Scripts\python.exe -m coverage report -m app/main.py app/task_service.py app/task_repository.py` | `0` | Cobertura total reportada `98%`; `app/main.py` y `app/task_service.py` completos (omitidos por `skip_covered`), `app/task_repository.py` `87%`. |
+| `\.venv\Scripts\python.exe -m coverage run --branch -m pytest tests/test_api.py -q -p no:warnings` (2026-10-19) | `0` | Suite final: `27` pruebas pasaron con cobertura de ramas. `-p no:warnings` evita imprimir warnings en esta ejecución. |
+| `\.venv\Scripts\python.exe -m coverage report -m` (2026-10-19) | `0` | Cobertura total `99%`; `app/task_repository.py` `87%`; los otros ocho módulos medidos están completamente cubiertos y se omiten por `skip_covered`. |
 
 Las advertencias observadas son deprecaciones de `anyio`/Starlette y del uso de `on_event` de FastAPI. No produjeron fallos. La suite se ejecutó contra el código actual, en entorno local, con SQLite temporal por prueba y backend de salud simulado; no requiere conexión a otro componente.
 

@@ -1,10 +1,10 @@
 # Workshop Requirements API
 
-Contrato verificado contra `app/main.py`, `app/task_service.py`, `app/task_repository.py` y `tests/test_api.py`. La API se ejecuta localmente en `http://localhost:8000`; Swagger publica OpenAPI 3.1.0, versión `0.1.0`.
+Contrato verificado contra `app/main.py`, `app/schemas.py`, `app/security.py`, los servicios/repositorios y `tests/test_api.py`. La API se ejecuta localmente en `http://localhost:8000`; Swagger publica OpenAPI 3.1.0, versión `0.1.0`, con modelos Pydantic para las respuestas.
 
 ## Autenticación común
 
-Las cinco operaciones requieren en la práctica un token aceptado por la dependencia actual, enviado exactamente como `Authorization: Bearer <token>`. Aunque Swagger marca el parámetro como opcional, el código responde `401` si falta o no es válido.
+Las cinco operaciones requieren en la práctica un token aceptado por la dependencia actual, enviado exactamente como `Authorization: Bearer <token>`. Aunque Swagger marca el parámetro como opcional, el código responde `401` si falta o no es válido, con cuerpo genérico `{"detail":"Invalid token"}`.
 
 El verificador actual decodifica Base64 y espera cuatro partes separadas por `|`: username, role, expiración Unix y una clave legacy. No es JWT, no verifica firma, issuer ni audience. La API no ofrece un endpoint público para emitir tokens. Por eso, `<TOKEN_BEARER_VALIDO>` en los ejemplos es un marcador, no una credencial utilizable. **Pregunta abierta:** ¿qué mecanismo aprobado debe usar un cliente para obtener tokens en el entorno local? No copiar una credencial de desarrollo a otros entornos.
 
@@ -72,7 +72,7 @@ Ejemplo:
 - `401 Unauthorized`: falta el header o el token no pasa la validación. Ejemplo comprobado al omitir el header:
 
 ```json
-{"detail":"Invalid token: invalid token"}
+{"detail":"Invalid token"}
 ```
 
 - `422 Unprocessable Content`: Swagger anuncia el error genérico de validación, pero `owner` es `string | null` y no se identificó en el código una entrada concreta que lo dispare. **Pregunta abierta:** confirmar si se desea sostener este estado como parte del contrato. No se inventa un cuerpo específico.
@@ -94,7 +94,7 @@ Requerida. Header exacto: `Authorization: Bearer <TOKEN_BEARER_VALIDO>`.
 
 ### 3. Request
 
-Cuerpo requerido `application/json`, representado por el código como un diccionario sin modelo de campos estricto.
+Cuerpo requerido `application/json`, recibido como un `RootModel` Pydantic cuyo valor raíz es un objeto JSON con propiedades arbitrarias. Los campos conocidos se convierten a string al accederlos; no se aplican enums ni restricciones por campo.
 
 | Campo/parámetro | Tipo | Obligatorio | Descripción |
 |---|---|---:|---|
@@ -155,7 +155,7 @@ Ejemplo:
 - `401 Unauthorized`: falta el header o el token no pasa la validación. Ejemplo:
 
 ```json
-{"detail":"Invalid token: invalid token"}
+{"detail":"Invalid token"}
 ```
 
 - `422 Unprocessable Content`: el cuerpo falta o no es un objeto JSON. Ejemplo real consultado con un array JSON:
@@ -227,7 +227,7 @@ Ejemplo para los datos iniciales del usuario `student`:
 - `401 Unauthorized`: falta el header o el token no pasa la validación. Ejemplo:
 
 ```json
-{"detail":"Invalid token: invalid token"}
+{"detail":"Invalid token"}
 ```
 
 - `422 Unprocessable Content`: Swagger anuncia validación genérica, pero `owner` es `string | null` y no se identificó una entrada concreta que la dispare. **Pregunta abierta:** confirmar si se sostiene este estado en el contrato.
@@ -299,7 +299,7 @@ Ejemplo con el directorio default y el contenido mostrado en la solicitud (24 by
 - `401 Unauthorized`: falta el header o el token no pasa la validación. Ejemplo:
 
 ```json
-{"detail":"Invalid token: invalid token"}
+{"detail":"Invalid token"}
 ```
 
 - `422 Unprocessable Content`: falta el campo `file` o FastAPI no puede validarlo como archivo. Ejemplo real consultado sin enviar archivo:
@@ -350,7 +350,7 @@ Estado HTTP `200 OK`.
 |---|---|---|
 | `requestedBy` | string | Username autenticado. |
 | `status` | integer | Status HTTP devuelto por el backend consultado; `0` si la llamada falla. |
-| `body` | string | Cuerpo del backend decodificado como UTF-8; mensaje de excepción si la llamada falla. |
+| `body` | string | Cuerpo del backend decodificado como UTF-8; mensaje genérico si falla una llamada de red prevista. |
 
 Ejemplo posible cuando el backend responde con HTTP 200 y cuerpo `OK`:
 
@@ -367,16 +367,16 @@ Ejemplo posible cuando el backend responde con HTTP 200 y cuerpo `OK`:
 - `401 Unauthorized`: falta el header o el token no pasa la validación. Ejemplo:
 
 ```json
-{"detail":"Invalid token: invalid token"}
+{"detail":"Invalid token"}
 ```
 
-- Fallo del backend consultado: no es un error HTTP de esta API; la ruta responde `200 OK` con `status: 0`. Ejemplo posible (el texto de `body` depende de la excepción):
+- Fallo de red previsto al consultar el backend: no es un error HTTP de esta API; responde `200 OK` con `status: 0` y mensaje genérico:
 
 ```json
 {
 	"requestedBy": "student",
 	"status": 0,
-	"body": "timed out"
+	"body": "Backend health request failed"
 }
 ```
 
@@ -384,7 +384,7 @@ Ejemplo posible cuando el backend responde con HTTP 200 y cuerpo `OK`:
 
 ### 6. Notas de seguridad
 
-La URL destino se controla mediante `AUTH_HEALTH_URL`, no por el request. El código captura todas las excepciones de la llamada y devuelve su texto en `body`; ese texto puede revelar detalles internos. La identidad depende del token legacy no firmado.
+La URL destino se controla mediante `AUTH_HEALTH_URL`, no por el request. Los fallos de red previstos se convierten a un mensaje genérico y no exponen el texto de excepción. La identidad depende del token legacy no firmado.
 
 ## Preguntas abiertas del contrato
 

@@ -11,6 +11,8 @@ import urllib3
 from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
+from app import task_service
+
 LEGACY_SECRET = "WORKSHOP_SECRET_2026"
 
 
@@ -53,56 +55,17 @@ def create_app(db_path: str | None = None, upload_dir: str | None = None) -> Fas
         allow_headers=["*"],
     )
 
-    def as_task(row: sqlite3.Row) -> dict[str, Any]:
-        return {
-            "id": row["id"],
-            "title": row["title"],
-            "description": row["description"],
-            "status": row["status"],
-            "owner": row["owner"],
-            "priority": row["priority"],
-            "createdAt": row["created_at"],
-        }
-
     @app.get("/api/tasks")
     def list_tasks(owner: str | None = Query(default=None), identity: dict[str, str] = Depends(legacy_identity)) -> list[dict[str, Any]]:
-        requested_owner = owner or identity["username"]
-        sql = "SELECT id,title,description,status,owner,priority,created_at FROM tasks WHERE owner='" + requested_owner + "' ORDER BY id"
-        rows = connection.execute(sql).fetchall()
-        result: list[dict[str, Any]] = []
-        for row in rows:
-            result.append(as_task(row))
-        return result
+        return task_service.list_tasks(connection, identity)
 
     @app.post("/api/tasks", status_code=201)
     def create_task(payload: dict[str, Any] = Body(...), identity: dict[str, str] = Depends(legacy_identity)) -> dict[str, Any]:
-        title = str(payload.get("title", ""))
-        description = str(payload.get("description", ""))
-        status = str(payload.get("status", "TODO"))
-        priority = str(payload.get("priority", "MEDIUM"))
-        owner = str(payload.get("owner", identity["username"]))
-        sql = "INSERT INTO tasks(title,description,status,owner,priority,created_at) VALUES ('" + title + "','" + description + "','" + status + "','" + owner + "','" + priority + "',datetime('now'))"
-        cursor = connection.execute(sql)
-        connection.commit()
-        row = connection.execute("SELECT id,title,description,status,owner,priority,created_at FROM tasks WHERE id=" + str(cursor.lastrowid)).fetchone()
-        return as_task(row)
+        return task_service.create_task(connection, payload, identity)
 
     @app.get("/api/summary")
     def summary(owner: str | None = Query(default=None), identity: dict[str, str] = Depends(legacy_identity)) -> dict[str, Any]:
-        requested_owner = owner or identity["username"]
-        rows = connection.execute("SELECT status,priority FROM tasks WHERE owner='" + requested_owner + "'").fetchall()
-        response: dict[str, Any] = {"owner": requested_owner, "total": 0, "byStatus": {}, "highPriorityOpen": 0}
-        for row in rows:
-            response["total"] = response["total"] + 1
-            if row["status"] in response["byStatus"]:
-                response["byStatus"][row["status"]] = response["byStatus"][row["status"]] + 1
-            else:
-                response["byStatus"][row["status"]] = 1
-            if row["priority"] == "HIGH":
-                if row["status"] != "DONE":
-                    if row["status"] != "ARCHIVED":
-                        response["highPriorityOpen"] = response["highPriorityOpen"] + 1
-        return response
+        return task_service.summarize_tasks(connection, identity)
 
     @app.post("/api/requirements", status_code=201)
     async def upload_requirement(file: UploadFile = File(...), identity: dict[str, str] = Depends(legacy_identity)) -> dict[str, Any]:

@@ -1,6 +1,6 @@
 # Reto — API FastAPI
 
-Los contratos que hay que preservar están en `docs/ENDPOINTS.md`. Este archivo
+Los contratos que hay que preservar están en `http://localhost:8000/docs#/`. Este archivo
 es solo la lista de lo que hay que encontrar.
 
 ## Hallazgos sembrados
